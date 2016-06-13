@@ -2,14 +2,26 @@
 using Discord.Audio;
 using Discord.Commands;
 using Discord.Modules;
+using NadekoBot.Classes.Help.Commands;
 using NadekoBot.Classes.JSONModels;
-using NadekoBot.Commands;
-using NadekoBot.Modules;
 using NadekoBot.Modules.Administration;
+using NadekoBot.Modules.ClashOfClans;
+using NadekoBot.Modules.Conversations;
+using NadekoBot.Modules.CustomReactions;
 using NadekoBot.Modules.Gambling;
 using NadekoBot.Modules.Games;
+using NadekoBot.Modules.Games.Commands;
+using NadekoBot.Modules.Help;
+#if !NADEKO_RELEASE
+using NadekoBot.Modules.Music;
+#endif
+using NadekoBot.Modules.NSFW;
+using NadekoBot.Modules.Permissions;
+using NadekoBot.Modules.Permissions.Classes;
 using NadekoBot.Modules.Pokemon;
+using NadekoBot.Modules.Searches;
 using NadekoBot.Modules.Translator;
+using NadekoBot.Modules.Trello;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
@@ -28,6 +40,7 @@ namespace NadekoBot
         public static LocalizedStrings Locale { get; set; } = new LocalizedStrings();
         public static string BotMention { get; set; } = "";
         public static bool Ready { get; set; } = false;
+        public static bool IsBot { get; set; } = false;
 
         private static Channel OwnerPrivateChannel { get; set; }
 
@@ -90,7 +103,7 @@ namespace NadekoBot
             }
 
             //if password is not entered, prompt for password
-            if (string.IsNullOrWhiteSpace(Creds.Password) && !string.IsNullOrWhiteSpace(Creds.Token))
+            if (string.IsNullOrWhiteSpace(Creds.Password) && string.IsNullOrWhiteSpace(Creds.Token))
             {
                 Console.WriteLine("Password blank. Please enter your password:\n");
                 Creds.Password = Console.ReadLine();
@@ -137,7 +150,7 @@ namespace NadekoBot
                         return;
                     try
                     {
-                        await e.Channel.SendMessage(e.Exception.Message);
+                        await e.Channel.SendMessage(e.Exception.Message).ConfigureAwait(false);
                     }
                     catch { }
                 }
@@ -157,25 +170,27 @@ namespace NadekoBot
             {
                 Channels = 2,
                 EnableEncryption = false,
-                EnableMultiserver = true,
                 Bitrate = 128,
             }));
 
             //install modules
             modules.Add(new AdministrationModule(), "Administration", ModuleFilter.None);
-            modules.Add(new Help(), "Help", ModuleFilter.None);
+            modules.Add(new HelpModule(), "Help", ModuleFilter.None);
             modules.Add(new PermissionModule(), "Permissions", ModuleFilter.None);
             modules.Add(new Conversations(), "Conversations", ModuleFilter.None);
             modules.Add(new GamblingModule(), "Gambling", ModuleFilter.None);
             modules.Add(new GamesModule(), "Games", ModuleFilter.None);
-            modules.Add(new Music(), "Music", ModuleFilter.None);
-            modules.Add(new Searches(), "Searches", ModuleFilter.None);
-            modules.Add(new NSFW(), "NSFW", ModuleFilter.None);
-            modules.Add(new ClashOfClans(), "ClashOfClans", ModuleFilter.None);
+#if !NADEKO_RELEASE
+            modules.Add(new MusicModule(), "Music", ModuleFilter.None);
+#endif
+            modules.Add(new SearchesModule(), "Searches", ModuleFilter.None);
+            modules.Add(new NSFWModule(), "NSFW", ModuleFilter.None);
+            modules.Add(new ClashOfClansModule(), "ClashOfClans", ModuleFilter.None);
             modules.Add(new PokemonModule(), "Pokegame", ModuleFilter.None);
             modules.Add(new TranslatorModule(), "Translator", ModuleFilter.None);
+            modules.Add(new CustomReactionsModule(), "Customreactions", ModuleFilter.None);
             if (!string.IsNullOrWhiteSpace(Creds.TrelloAppKey))
-                modules.Add(new Trello(), "Trello", ModuleFilter.None);
+                modules.Add(new TrelloModule(), "Trello", ModuleFilter.None);
 
             //run the bot
             Client.ExecuteAndWait(async () =>
@@ -183,9 +198,12 @@ namespace NadekoBot
                 try
                 {
                     if (string.IsNullOrWhiteSpace(Creds.Token))
-                        await Client.Connect(Creds.Username, Creds.Password);
+                        await Client.Connect(Creds.Username, Creds.Password).ConfigureAwait(false);
                     else
-                        await Client.Connect(Creds.Token);
+                    {
+                        await Client.Connect(Creds.Token).ConfigureAwait(false);
+                        IsBot = true;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -197,13 +215,19 @@ namespace NadekoBot
                     Console.ReadKey();
                     return;
                 }
+#if NADEKO_RELEASE
+                await Task.Delay(100000).ConfigureAwait(false);
+#else
+                await Task.Delay(1000).ConfigureAwait(false);
+#endif
+
                 Console.WriteLine("-----------------");
-                Console.WriteLine(await NadekoStats.Instance.GetStats());
+                Console.WriteLine(await NadekoStats.Instance.GetStats().ConfigureAwait(false));
                 Console.WriteLine("-----------------");
 
                 try
                 {
-                    OwnerPrivateChannel = await Client.CreatePrivateChannel(Creds.OwnerIds[0]);
+                    OwnerPrivateChannel = await Client.CreatePrivateChannel(Creds.OwnerIds[0]).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -214,13 +238,12 @@ namespace NadekoBot
                 {
                     var request = e.Request as Discord.API.Client.Rest.SendMessageRequest;
                     if (request == null) return;
-                    request.Content = request.Content?.Replace("@everyone", "@everyοne") ?? "_error_";
+                    // meew0 is magic
+                    request.Content = request.Content?.Replace("@everyone", "@everyοne").Replace("@here", "@һere") ?? "_error_";
                     if (string.IsNullOrWhiteSpace(request.Content))
                         e.Cancel = true;
                 };
-
-                //await Task.Delay(90000);
-                Classes.Permissions.PermissionsHandler.Initialize();
+                PermissionsHandler.Initialize();
                 NadekoBot.Ready = true;
             });
             Console.WriteLine("Exiting...");
@@ -232,7 +255,7 @@ namespace NadekoBot
         public async Task SendMessageToOwner(string message)
         {
             if (Config.ForwardMessages && OwnerPrivateChannel != null)
-                await OwnerPrivateChannel.SendMessage(message);
+                await OwnerPrivateChannel.SendMessage(message).ConfigureAwait(false);
         }
 
         private static bool repliedRecently = false;
@@ -245,33 +268,33 @@ namespace NadekoBot
                 if (ConfigHandler.IsBlackListed(e))
                     return;
 
-                if (!NadekoBot.Config.DontJoinServers)
+                if (!NadekoBot.Config.DontJoinServers && !IsBot)
                 {
                     try
                     {
-                        await (await Client.GetInvite(e.Message.Text)).Accept();
-                        await e.Channel.SendMessage("I got in!");
+                        await (await Client.GetInvite(e.Message.Text).ConfigureAwait(false)).Accept().ConfigureAwait(false);
+                        await e.Channel.SendMessage("I got in!").ConfigureAwait(false);
                         return;
                     }
                     catch
                     {
                         if (e.User.Id == 109338686889476096)
                         { //carbonitex invite
-                            await e.Channel.SendMessage("Failed to join the server.");
+                            await e.Channel.SendMessage("Failed to join the server.").ConfigureAwait(false);
                             return;
                         }
                     }
                 }
 
                 if (Config.ForwardMessages && !NadekoBot.Creds.OwnerIds.Contains(e.User.Id) && OwnerPrivateChannel != null)
-                    await OwnerPrivateChannel.SendMessage(e.User + ": ```\n" + e.Message.Text + "\n```");
+                    await OwnerPrivateChannel.SendMessage(e.User + ": ```\n" + e.Message.Text + "\n```").ConfigureAwait(false);
 
                 if (repliedRecently) return;
 
                 repliedRecently = true;
                 if (e.Message.RawText != "-h")
-                    await e.Channel.SendMessage(HelpCommand.DMHelpString);
-                await Task.Delay(2000);
+                    await e.Channel.SendMessage(HelpCommand.DMHelpString).ConfigureAwait(false);
+                await Task.Delay(2000).ConfigureAwait(false);
                 repliedRecently = false;
             }
             catch { }

@@ -1,11 +1,13 @@
 ﻿using Discord;
 using Discord.Commands;
 using NadekoBot.Extensions;
-using NadekoBot.Modules;
 using NadekoBot.Modules.Administration.Commands;
+using NadekoBot.Modules.Music;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Net.Http;
 using System.Reflection;
 using System.Threading.Tasks;
 using System.Timers;
@@ -27,6 +29,10 @@ namespace NadekoBot
         public int VoiceChannelsCount { get; private set; } = 0;
 
         private readonly Timer commandLogTimer = new Timer() { Interval = 10000 };
+        private readonly Timer carbonStatusTimer = new Timer() { Interval = 3600000 };
+
+        private static ulong messageCounter = 0;
+        public static ulong MessageCounter => messageCounter;
 
         static NadekoStats() { }
 
@@ -47,6 +53,8 @@ namespace NadekoBot
             TextChannelsCount = channelsArray.Count(c => c.Type == ChannelType.Text);
             VoiceChannelsCount = channelsArray.Count() - TextChannelsCount;
 
+            NadekoBot.Client.MessageReceived += (s, e) => messageCounter++;
+
             NadekoBot.Client.JoinedServer += (s, e) =>
             {
                 try
@@ -54,6 +62,7 @@ namespace NadekoBot
                     ServerCount++;
                     TextChannelsCount += e.Server.TextChannels.Count();
                     VoiceChannelsCount += e.Server.VoiceChannels.Count();
+                    //await SendUpdateToCarbon().ConfigureAwait(false);
                 }
                 catch { }
             };
@@ -64,6 +73,7 @@ namespace NadekoBot
                     ServerCount--;
                     TextChannelsCount -= e.Server.TextChannels.Count();
                     VoiceChannelsCount -= e.Server.VoiceChannels.Count();
+                    //await SendUpdateToCarbon().ConfigureAwait(false);
                 }
                 catch { }
             };
@@ -93,6 +103,32 @@ namespace NadekoBot
                 }
                 catch { }
             };
+            carbonStatusTimer.Elapsed += async (s, e) => await SendUpdateToCarbon().ConfigureAwait(false);
+            carbonStatusTimer.Start();
+        }
+        HttpClient carbonClient = new HttpClient();
+        private async Task SendUpdateToCarbon()
+        {
+            if (string.IsNullOrWhiteSpace(NadekoBot.Creds.CarbonKey))
+                return;
+            try
+            {
+                using (var content = new FormUrlEncodedContent(new Dictionary<string, string> {
+                                { "servercount", NadekoBot.Client.Servers.Count().ToString() },
+                                { "key", NadekoBot.Creds.CarbonKey }
+                    }))
+                {
+                    content.Headers.Clear();
+                    content.Headers.Add("Content-Type", "application/x-www-form-urlencoded");
+
+                    var res = await carbonClient.PostAsync("https://www.carbonitex.net/discord/data/botdata.php", content).ConfigureAwait(false);
+                };
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Failed sending status update to carbon.");
+                Console.WriteLine(ex);
+            }
         }
 
         public TimeSpan GetUptime() =>
@@ -100,14 +136,14 @@ namespace NadekoBot
 
         public string GetUptimeString()
         {
-            var time = (DateTime.Now - Process.GetCurrentProcess().StartTime);
+            var time = GetUptime();
             return time.Days + " days, " + time.Hours + " hours, and " + time.Minutes + " minutes.";
         }
 
         public Task LoadStats() =>
             Task.Run(() =>
             {
-                var songs = Music.MusicPlayers.Count(mp => mp.Value.CurrentSong != null);
+                var songs = MusicModule.MusicPlayers.Count(mp => mp.Value.CurrentSong != null);
                 var sb = new System.Text.StringBuilder();
                 sb.AppendLine("`Author: Kwoth` `Library: Discord.Net`");
                 sb.AppendLine($"`Bot Version: {BotVersion}`");
@@ -122,8 +158,8 @@ namespace NadekoBot
                 sb.AppendLine($"`Message queue size: {NadekoBot.Client.MessageQueue.Count}`");
                 sb.Append($"`Greeted {ServerGreetCommand.Greeted} times.`");
                 sb.AppendLine($" `| Playing {songs} songs, ".SnPl(songs) +
-                              $"{Music.MusicPlayers.Sum(kvp => kvp.Value.Playlist.Count)} queued.`");
-                sb.AppendLine($"`Heap: {Heap(false)}`");
+                              $"{MusicModule.MusicPlayers.Sum(kvp => kvp.Value.Playlist.Count)} queued.`");
+                sb.AppendLine($"`Messages: {messageCounter} ({messageCounter / (double)GetUptime().TotalSeconds:F2}/sec)`  `Heap: {Heap(false)}`");
                 statsCache = sb.ToString();
             });
 
@@ -133,7 +169,7 @@ namespace NadekoBot
         {
             if (statsStopwatch.Elapsed.Seconds < 4 &&
                 !string.IsNullOrWhiteSpace(statsCache)) return statsCache;
-            await LoadStats();
+            await LoadStats().ConfigureAwait(false);
             statsStopwatch.Restart();
             return statsCache;
         }
@@ -142,15 +178,16 @@ namespace NadekoBot
         {
             while (true)
             {
-                await Task.Delay(new TimeSpan(0, 30, 0));
+                await Task.Delay(new TimeSpan(0, 30, 0)).ConfigureAwait(false);
                 try
                 {
-                    var onlineUsers = await Task.Run(() => NadekoBot.Client.Servers.Sum(x => x.Users.Count()));
+                    var onlineUsers = await Task.Run(() => NadekoBot.Client.Servers.Sum(x => x.Users.Count())).ConfigureAwait(false);
                     var realOnlineUsers = await Task.Run(() => NadekoBot.Client.Servers
-                                                                        .Sum(x => x.Users.Count(u => u.Status == UserStatus.Online)));
+                                                                        .Sum(x => x.Users.Count(u => u.Status == UserStatus.Online)))
+                                                                        .ConfigureAwait(false);
                     var connectedServers = NadekoBot.Client.Servers.Count();
 
-                    Classes.DbHandler.Instance.InsertData(new Classes._DataModels.Stats
+                    Classes.DbHandler.Instance.InsertData(new DataModels.Stats
                     {
                         OnlineUsers = onlineUsers,
                         RealOnlineUsers = realOnlineUsers,
@@ -169,29 +206,30 @@ namespace NadekoBot
 
         private async void StatsCollector_RanCommand(object sender, CommandEventArgs e)
         {
-            Console.WriteLine($">>Command {e.Command.Text}");
+            Console.WriteLine($">> Cmd: {e.Command.Text}\nMsg: {e.Message.Text}\nUsr: {e.User.Name} [{e.User.Id}]\nSrvr: {e.Server?.Name ?? "PRIVATE"} [{e.Server?.Id}]\n-----");
             await Task.Run(() =>
             {
                 try
                 {
                     commandsRan++;
-                    Classes.DbHandler.Instance.InsertData(new Classes._DataModels.Command
+                    Classes.DbHandler.Instance.InsertData(new DataModels.Command
                     {
-                        ServerId = (long)e.Server.Id,
-                        ServerName = e.Server.Name,
+                        ServerId = (long)(e.Server?.Id ?? 0),
+                        ServerName = e.Server?.Name ?? "--Direct Message--",
                         ChannelId = (long)e.Channel.Id,
-                        ChannelName = e.Channel.Name,
+                        ChannelName = e.Channel.IsPrivate ? "--Direct Message" : e.Channel.Name,
                         UserId = (long)e.User.Id,
                         UserName = e.User.Name,
                         CommandName = e.Command.Text,
                         DateAdded = DateTime.Now
                     });
                 }
-                catch
+                catch (Exception ex)
                 {
-                    Console.WriteLine("Error in ran command DB write.");
+                    Console.WriteLine("Probably unimportant error in ran command DB write.");
+                    Console.WriteLine(ex);
                 }
-            });
+            }).ConfigureAwait(false);
         }
     }
 }

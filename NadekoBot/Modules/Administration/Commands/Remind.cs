@@ -1,8 +1,8 @@
 ﻿using Discord;
 using Discord.Commands;
 using NadekoBot.Classes;
-using NadekoBot.Classes._DataModels;
-using NadekoBot.Commands;
+using NadekoBot.DataModels;
+using NadekoBot.Modules.Permissions.Classes;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -19,11 +19,17 @@ namespace NadekoBot.Modules.Administration.Commands
 
         List<Timer> reminders = new List<Timer>();
 
+        IDictionary<string, Func<Reminder, string>> replacements = new Dictionary<string, Func<Reminder, string>>
+        {
+            { "%message%" , (r) => r.Message },
+            { "%user%", (r) => $"<@!{r.UserId}>" },
+            { "%target%", (r) =>  r.IsPrivate ? "Direct Message" : $"<#{r.ChannelId}>"}
+        };
+
         public Remind(DiscordModule module) : base(module)
         {
             var remList = DbHandler.Instance.GetAllRows<Reminder>();
 
-            Console.WriteLine(string.Join("\n-", remList.Select(r => r.When.ToString())));
             reminders = remList.Select(StartNewReminder).ToList();
         }
 
@@ -47,7 +53,7 @@ namespace NadekoBot.Modules.Administration.Commands
                     {
                         ch = NadekoBot.Client.PrivateChannels.FirstOrDefault(c => (long)c.Id == r.ChannelId);
                         if (ch == null)
-                            ch = await NadekoBot.Client.CreatePrivateChannel((ulong)r.ChannelId);
+                            ch = await NadekoBot.Client.CreatePrivateChannel((ulong)r.ChannelId).ConfigureAwait(false);
                     }
                     else
                         ch = NadekoBot.Client.GetServer((ulong)r.ServerId)?.GetChannel((ulong)r.ChannelId);
@@ -55,7 +61,11 @@ namespace NadekoBot.Modules.Administration.Commands
                     if (ch == null)
                         return;
 
-                    await ch.SendMessage($"❗⏰**I've been told to remind you to '{r.Message}' now by <@{r.UserId}>.**⏰❗");
+                    await ch.SendMessage(
+                        replacements.Aggregate(NadekoBot.Config.RemindMessageFormat,
+                        (cur, replace) => cur.Replace(replace.Key, replace.Value(r)))
+                            ).ConfigureAwait(false); //it works trust me
+
                 }
                 catch (Exception ex)
                 {
@@ -90,7 +100,7 @@ namespace NadekoBot.Modules.Administration.Commands
                     if (meorchStr == "ME")
                     {
                         isPrivate = true;
-                        ch = await e.User.CreatePMChannel();
+                        ch = await e.User.CreatePMChannel().ConfigureAwait(false);
                     }
                     else if (meorchStr == "HERE")
                     {
@@ -103,7 +113,7 @@ namespace NadekoBot.Modules.Administration.Commands
 
                     if (ch == null)
                     {
-                        await e.Channel.SendMessage($"{e.User.Mention} Something went wrong (channel cannot be found) ;(");
+                        await e.Channel.SendMessage($"{e.User.Mention} Something went wrong (channel cannot be found) ;(").ConfigureAwait(false);
                         return;
                     }
 
@@ -113,7 +123,7 @@ namespace NadekoBot.Modules.Administration.Commands
 
                     if (m.Length == 0)
                     {
-                        await e.Channel.SendMessage("Not a valid time format blablabla");
+                        await e.Channel.SendMessage("Not a valid time format blablabla").ConfigureAwait(false);
                         return;
                     }
 
@@ -138,7 +148,7 @@ namespace NadekoBot.Modules.Administration.Commands
                             (groupName == "hours" && value > 23) ||
                             (groupName == "minutes" && value > 59))
                         {
-                            await e.Channel.SendMessage($"Invalid {groupName} value.");
+                            await e.Channel.SendMessage($"Invalid {groupName} value.").ConfigureAwait(false);
                             return;
                         }
                         else
@@ -165,7 +175,22 @@ namespace NadekoBot.Modules.Administration.Commands
 
                     reminders.Add(StartNewReminder(rem));
 
-                    await e.Channel.SendMessage($"⏰ I will remind \"{ch.Name}\" to \"{e.GetArg("message").ToString()}\" in {output}. ({time:d.M.yyyy.} at {time:HH:m})");
+                    await e.Channel.SendMessage($"⏰ I will remind \"{ch.Name}\" to \"{e.GetArg("message").ToString()}\" in {output}. ({time:d.M.yyyy.} at {time:HH:mm})").ConfigureAwait(false);
+                });
+            cgb.CreateCommand(Module.Prefix + "remindmsg")
+                .Description("Sets message for when the remind is triggered. " +
+                    " Available placeholders are %user% - user who ran the command, %message% -" +
+                    " Message specified in the remind, %target% - target channel of the remind. **Owner only!**")
+                .Parameter("msg", ParameterType.Unparsed)
+                .AddCheck(SimpleCheckers.OwnerOnly())
+                .Do(async e =>
+                {
+                    var arg = e.GetArg("msg")?.Trim();
+                    if (string.IsNullOrWhiteSpace(arg))
+                        return;
+
+                    NadekoBot.Config.RemindMessageFormat = arg;
+                    await e.Channel.SendMessage("`New remind message set.`");
                 });
         }
     }

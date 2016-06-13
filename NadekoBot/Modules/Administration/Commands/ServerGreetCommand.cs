@@ -1,6 +1,6 @@
 ﻿using Discord;
 using Discord.Commands;
-using NadekoBot.Commands;
+using NadekoBot.Classes;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading.Tasks;
@@ -34,7 +34,7 @@ namespace NadekoBot.Modules.Administration.Commands
             NadekoBot.Client.UserJoined += UserJoined;
             NadekoBot.Client.UserLeft += UserLeft;
 
-            var data = Classes.DbHandler.Instance.GetAllRows<Classes._DataModels.Announcement>();
+            var data = Classes.DbHandler.Instance.GetAllRows<DataModels.Announcement>();
 
             if (!data.Any()) return;
             foreach (var obj in data)
@@ -59,7 +59,7 @@ namespace NadekoBot.Modules.Administration.Commands
                     Greeted++;
                     try
                     {
-                        await e.User.SendMessage($"`Farewell Message From {e.Server?.Name}`\n" + msg);
+                        await e.User.SendMessage($"`Farewell Message From {e.Server?.Name}`\n" + msg).ConfigureAwait(false);
 
                     }
                     catch { }
@@ -68,11 +68,11 @@ namespace NadekoBot.Modules.Administration.Commands
                 {
                     if (channel == null) return;
                     Greeted++;
-                    var toDelete = await channel.SendMessage(msg);
-                    if (e.Server.CurrentUser.GetPermissions(channel).ManageMessages)
+                    var toDelete = await channel.SendMessage(msg).ConfigureAwait(false);
+                    if (e.Server.CurrentUser.GetPermissions(channel).ManageMessages && controls.DeleteGreetMessages)
                     {
-                        await Task.Delay(300000); // 5 minutes
-                        await toDelete.Delete();
+                        await Task.Delay(30000).ConfigureAwait(false); // 5 minutes
+                        await toDelete.Delete().ConfigureAwait(false);
                     }
                 }
             }
@@ -95,17 +95,17 @@ namespace NadekoBot.Modules.Administration.Commands
                 if (controls.GreetPM)
                 {
                     Greeted++;
-                    await e.User.SendMessage($"`Welcome Message From {e.Server.Name}`\n" + msg);
+                    await e.User.SendMessage($"`Welcome Message From {e.Server.Name}`\n" + msg).ConfigureAwait(false);
                 }
                 else
                 {
                     if (channel == null) return;
                     Greeted++;
-                    var toDelete = await channel.SendMessage(msg);
-                    if (e.Server.CurrentUser.GetPermissions(channel).ManageMessages)
+                    var toDelete = await channel.SendMessage(msg).ConfigureAwait(false);
+                    if (e.Server.CurrentUser.GetPermissions(channel).ManageMessages && controls.DeleteGreetMessages)
                     {
-                        await Task.Delay(300000); // 5 minutes
-                        await toDelete.Delete();
+                        await Task.Delay(30000).ConfigureAwait(false); // 5 minutes
+                        await toDelete.Delete().ConfigureAwait(false);
                     }
                 }
             }
@@ -114,7 +114,7 @@ namespace NadekoBot.Modules.Administration.Commands
 
         public class AnnounceControls
         {
-            private Classes._DataModels.Announcement _model { get; }
+            private DataModels.Announcement _model { get; }
 
             public bool Greet {
                 get { return _model.Greet; }
@@ -160,14 +160,23 @@ namespace NadekoBot.Modules.Administration.Commands
                 set { _model.ServerId = (long)value; }
             }
 
-            public AnnounceControls(Classes._DataModels.Announcement model)
+            public bool DeleteGreetMessages {
+                get {
+                    return _model.DeleteGreetMessages;
+                }
+                set {
+                    _model.DeleteGreetMessages = value; Save();
+                }
+            }
+
+            public AnnounceControls(DataModels.Announcement model)
             {
                 this._model = model;
             }
 
             public AnnounceControls(ulong serverId)
             {
-                this._model = new Classes._DataModels.Announcement();
+                this._model = new DataModels.Announcement();
                 ServerId = serverId;
             }
 
@@ -196,6 +205,8 @@ namespace NadekoBot.Modules.Administration.Commands
                     return Greet = true;
                 }
             }
+
+            internal bool ToggleDelete() => DeleteGreetMessages = !DeleteGreetMessages;
             internal bool ToggleGreetPM() => GreetPM = !GreetPM;
             internal bool ToggleByePM() => ByePM = !ByePM;
 
@@ -207,69 +218,82 @@ namespace NadekoBot.Modules.Administration.Commands
 
         internal override void Init(CommandGroupBuilder cgb)
         {
-
-            cgb.CreateCommand(Module.Prefix + "greet")
-                .Description("Enables or Disables anouncements on the current channel when someone joins the server.")
+            cgb.CreateCommand(Module.Prefix + "grdel")
+                .Description("Toggles automatic deletion of greet and bye messages.")
                 .Do(async e =>
                 {
                     if (!e.User.ServerPermissions.ManageServer) return;
-                    if (!AnnouncementsDictionary.ContainsKey(e.Server.Id))
-                        AnnouncementsDictionary.TryAdd(e.Server.Id, new AnnounceControls(e.Server.Id));
+                    var ann = AnnouncementsDictionary.GetOrAdd(e.Server.Id, new AnnounceControls(e.Server.Id));
 
-                    var controls = AnnouncementsDictionary[e.Server.Id];
-
-                    if (controls.ToggleGreet(e.Channel.Id))
-                        await e.Channel.SendMessage("Greet announcements enabled on this channel.");
+                    if (ann.ToggleDelete())
+                        await e.Channel.SendMessage("`Automatic deletion of greet and bye messages has been enabled.`").ConfigureAwait(false);
                     else
-                        await e.Channel.SendMessage("Greet announcements disabled.");
+                        await e.Channel.SendMessage("`Automatic deletion of greet and bye messages has been disabled.`").ConfigureAwait(false);
+                });
+
+            cgb.CreateCommand(Module.Prefix + "greet")
+                .Description("Toggles anouncements on the current channel when someone joins the server.")
+                .Do(async e =>
+                {
+                    if (!e.User.ServerPermissions.ManageServer) return;
+                    var ann = AnnouncementsDictionary.GetOrAdd(e.Server.Id, new AnnounceControls(e.Server.Id));
+
+                    if (ann.ToggleGreet(e.Channel.Id))
+                        await e.Channel.SendMessage("Greet announcements enabled on this channel.").ConfigureAwait(false);
+                    else
+                        await e.Channel.SendMessage("Greet announcements disabled.").ConfigureAwait(false);
                 });
 
             cgb.CreateCommand(Module.Prefix + "greetmsg")
-                .Description("Sets a new announce message. Type %user% if you want to mention the new member.\n**Usage**: .greetmsg Welcome to the server, %user%.")
+                .Description("Sets a new join announcement message. Type %user% if you want to mention the new member. Using it with no message will show the current greet message.\n**Usage**: .greetmsg Welcome to the server, %user%.")
                 .Parameter("msg", ParameterType.Unparsed)
                 .Do(async e =>
                 {
                     if (!e.User.ServerPermissions.ManageServer) return;
-                    if (e.GetArg("msg") == null) return;
-                    if (!AnnouncementsDictionary.ContainsKey(e.Server.Id))
-                        AnnouncementsDictionary.TryAdd(e.Server.Id, new AnnounceControls(e.Server.Id));
+                    var ann = AnnouncementsDictionary.GetOrAdd(e.Server.Id, new AnnounceControls(e.Server.Id));
+                    if (string.IsNullOrWhiteSpace(e.GetArg("msg")))
+                    {
+                        await e.Channel.SendMessage("`Current greet message:` " + ann.GreetText);
+                        return;
+                    }
 
-                    AnnouncementsDictionary[e.Server.Id].GreetText = e.GetArg("msg");
-                    await e.Channel.SendMessage("New greet message set.");
-                    if (!AnnouncementsDictionary[e.Server.Id].Greet)
-                        await e.Channel.SendMessage("Enable greet messsages by typing `.greet`");
+
+                    ann.GreetText = e.GetArg("msg");
+                    await e.Channel.SendMessage("New greet message set.").ConfigureAwait(false);
+                    if (!ann.Greet)
+                        await e.Channel.SendMessage("Enable greet messsages by typing `.greet`").ConfigureAwait(false);
                 });
 
             cgb.CreateCommand(Module.Prefix + "bye")
-                .Description("Enables or Disables anouncements on the current channel when someone leaves the server.")
+                .Description("Toggles anouncements on the current channel when someone leaves the server.")
                 .Do(async e =>
                 {
                     if (!e.User.ServerPermissions.ManageServer) return;
-                    if (!AnnouncementsDictionary.ContainsKey(e.Server.Id))
-                        AnnouncementsDictionary.TryAdd(e.Server.Id, new AnnounceControls(e.Server.Id));
+                    var ann = AnnouncementsDictionary.GetOrAdd(e.Server.Id, new AnnounceControls(e.Server.Id));
 
-                    var controls = AnnouncementsDictionary[e.Server.Id];
-
-                    if (controls.ToggleBye(e.Channel.Id))
-                        await e.Channel.SendMessage("Bye announcements enabled on this channel.");
+                    if (ann.ToggleBye(e.Channel.Id))
+                        await e.Channel.SendMessage("Bye announcements enabled on this channel.").ConfigureAwait(false);
                     else
-                        await e.Channel.SendMessage("Bye announcements disabled.");
+                        await e.Channel.SendMessage("Bye announcements disabled.").ConfigureAwait(false);
                 });
 
             cgb.CreateCommand(Module.Prefix + "byemsg")
-                .Description("Sets a new announce leave message. Type %user% if you want to mention the new member.\n**Usage**: .byemsg %user% has left the server.")
+                .Description("Sets a new leave announcement message. Type %user% if you want to mention the new member. Using it with no message will show the current bye message.\n**Usage**: .byemsg %user% has left the server.")
                 .Parameter("msg", ParameterType.Unparsed)
                 .Do(async e =>
                 {
                     if (!e.User.ServerPermissions.ManageServer) return;
-                    if (e.GetArg("msg") == null) return;
-                    if (!AnnouncementsDictionary.ContainsKey(e.Server.Id))
-                        AnnouncementsDictionary.TryAdd(e.Server.Id, new AnnounceControls(e.Server.Id));
+                    var ann = AnnouncementsDictionary.GetOrAdd(e.Server.Id, new AnnounceControls(e.Server.Id));
+                    if (string.IsNullOrWhiteSpace(e.GetArg("msg")))
+                    {
+                        await e.Channel.SendMessage("`Current bye message:` " + ann.ByeText);
+                        return;
+                    }
 
-                    AnnouncementsDictionary[e.Server.Id].ByeText = e.GetArg("msg");
-                    await e.Channel.SendMessage("New bye message set.");
-                    if (!AnnouncementsDictionary[e.Server.Id].Bye)
-                        await e.Channel.SendMessage("Enable bye messsages by typing `.bye`.");
+                    ann.ByeText = e.GetArg("msg");
+                    await e.Channel.SendMessage("New bye message set.").ConfigureAwait(false);
+                    if (!ann.Bye)
+                        await e.Channel.SendMessage("Enable bye messsages by typing `.bye`.").ConfigureAwait(false);
                 });
 
             cgb.CreateCommand(Module.Prefix + "byepm")
@@ -277,16 +301,15 @@ namespace NadekoBot.Modules.Administration.Commands
                 .Do(async e =>
                 {
                     if (!e.User.ServerPermissions.ManageServer) return;
-                    if (!AnnouncementsDictionary.ContainsKey(e.Server.Id))
-                        AnnouncementsDictionary.TryAdd(e.Server.Id, new AnnounceControls(e.Server.Id));
+                    var ann = AnnouncementsDictionary.GetOrAdd(e.Server.Id, new AnnounceControls(e.Server.Id));
 
-                    AnnouncementsDictionary[e.Server.Id].ToggleByePM();
-                    if (AnnouncementsDictionary[e.Server.Id].ByePM)
-                        await e.Channel.SendMessage("Bye messages will be sent in a PM from now on.\n ⚠ Keep in mind this might fail if the user and the bot have no common servers after the user leaves.");
+
+                    if (ann.ToggleByePM())
+                        await e.Channel.SendMessage("Bye messages will be sent in a PM from now on.\n ⚠ Keep in mind this might fail if the user and the bot have no common servers after the user leaves.").ConfigureAwait(false);
                     else
-                        await e.Channel.SendMessage("Bye messages will be sent in a bound channel from now on.");
-                    if (!AnnouncementsDictionary[e.Server.Id].Bye)
-                        await e.Channel.SendMessage("Enable bye messsages by typing `.bye`, and set the bye message using `.byemsg`");
+                        await e.Channel.SendMessage("Bye messages will be sent in a bound channel from now on.").ConfigureAwait(false);
+                    if (!ann.Bye)
+                        await e.Channel.SendMessage("Enable bye messsages by typing `.bye`, and set the bye message using `.byemsg`").ConfigureAwait(false);
                 });
 
             cgb.CreateCommand(Module.Prefix + "greetpm")
@@ -294,16 +317,15 @@ namespace NadekoBot.Modules.Administration.Commands
                 .Do(async e =>
                 {
                     if (!e.User.ServerPermissions.ManageServer) return;
-                    if (!AnnouncementsDictionary.ContainsKey(e.Server.Id))
-                        AnnouncementsDictionary.TryAdd(e.Server.Id, new AnnounceControls(e.Server.Id));
 
-                    AnnouncementsDictionary[e.Server.Id].ToggleGreetPM();
-                    if (AnnouncementsDictionary[e.Server.Id].GreetPM)
-                        await e.Channel.SendMessage("Greet messages will be sent in a PM from now on.");
+                    var ann = AnnouncementsDictionary.GetOrAdd(e.Server.Id, new AnnounceControls(e.Server.Id));
+
+                    if (ann.ToggleGreetPM())
+                        await e.Channel.SendMessage("Greet messages will be sent in a PM from now on.").ConfigureAwait(false);
                     else
-                        await e.Channel.SendMessage("Greet messages will be sent in a bound channel from now on.");
-                    if (!AnnouncementsDictionary[e.Server.Id].Greet)
-                        await e.Channel.SendMessage("Enable greet messsages by typing `.greet`, and set the greet message using `.greetmsg`");
+                        await e.Channel.SendMessage("Greet messages will be sent in a bound channel from now on.").ConfigureAwait(false);
+                    if (!ann.Greet)
+                        await e.Channel.SendMessage("Enable greet messsages by typing `.greet`, and set the greet message using `.greetmsg`").ConfigureAwait(false);
                 });
         }
     }

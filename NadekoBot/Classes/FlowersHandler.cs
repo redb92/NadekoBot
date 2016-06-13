@@ -10,23 +10,20 @@ namespace NadekoBot.Classes
                 return;
             await Task.Run(() =>
             {
-                DbHandler.Instance.InsertData(new _DataModels.CurrencyTransaction
+                DbHandler.Instance.InsertData(new DataModels.CurrencyTransaction
                 {
                     Reason = reason,
                     UserId = (long)u.Id,
                     Value = amount,
                 });
-            });
+            }).ConfigureAwait(false);
 
             if (silent)
                 return;
 
-            var flows = "";
-            for (var i = 0; i < amount; i++)
-            {
-                flows += NadekoBot.Config.CurrencySign;
-            }
-            await u.SendMessage("👑Congratulations!👑\nYou received: " + flows);
+            var flows = amount +" " + NadekoBot.Config.CurrencySign;
+
+            await u.SendMessage("👑Congratulations!👑\nYou received: " + flows).ConfigureAwait(false);
         }
 
         public static bool RemoveFlowers(Discord.User u, string reason, int amount)
@@ -34,12 +31,12 @@ namespace NadekoBot.Classes
             if (amount <= 0)
                 return false;
             var uid = (long)u.Id;
-            var state = DbHandler.Instance.FindOne<_DataModels.CurrencyState>(cs => cs.UserId == uid);
+            var state = DbHandler.Instance.FindOne<DataModels.CurrencyState>(cs => cs.UserId == uid);
 
             if (state.Value < amount)
                 return false;
 
-            DbHandler.Instance.InsertData(new _DataModels.CurrencyTransaction
+            DbHandler.Instance.InsertData(new DataModels.CurrencyTransaction
             {
                 Reason = reason,
                 UserId = (long)u.Id,

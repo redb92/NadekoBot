@@ -1,6 +1,6 @@
 ﻿using Discord;
 using Discord.Commands;
-using NadekoBot.Commands;
+using NadekoBot.Classes;
 using System.Text;
 using System.Timers;
 using static NadekoBot.Modules.Games.Commands.Bomberman;
@@ -77,7 +77,7 @@ namespace NadekoBot.Modules.Games.Commands
                     boardStr.AppendLine();
                 }
                 if (godMsg.Id != 0)
-                    await godMsg.Edit(boardStr.ToString());
+                    await godMsg.Edit(boardStr.ToString()).ConfigureAwait(false);
 
             };
             t.Interval = 1000;
@@ -93,7 +93,7 @@ namespace NadekoBot.Modules.Games.Commands
             //    {
             //        if (gameChannel != null)
             //            return;
-            //        godMsg = await e.Channel.SendMessage("GAME START IN 1 SECOND....");
+            //        godMsg = await e.Channel.SendMessage("GAME START IN 1 SECOND....").ConfigureAwait(false);
             //        gameChannel = e.Channel;
             //        players[0] = new BombermanPlayer
             //        {

@@ -1,8 +1,8 @@
 ﻿using Discord;
 using Discord.Commands;
 using NadekoBot.Classes;
-using NadekoBot.Classes.Permissions;
-using NadekoBot.Commands;
+using NadekoBot.Extensions;
+using NadekoBot.Modules.Permissions.Classes;
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
@@ -17,6 +17,8 @@ namespace NadekoBot.Modules.Administration.Commands
         private readonly ConcurrentDictionary<Server, Channel> loggingPresences = new ConcurrentDictionary<Server, Channel>();
         private readonly ConcurrentDictionary<Channel, Channel> voiceChannelLog = new ConcurrentDictionary<Channel, Channel>();
 
+        private string prettyCurrentTime => $"【{DateTime.Now:HH:mm:ss}】";
+
         public LogCommand(DiscordModule module) : base(module)
         {
             NadekoBot.Client.MessageReceived += MsgRecivd;
@@ -24,6 +26,12 @@ namespace NadekoBot.Modules.Administration.Commands
             NadekoBot.Client.MessageUpdated += MsgUpdtd;
             NadekoBot.Client.UserUpdated += UsrUpdtd;
             NadekoBot.Client.UserBanned += UsrBanned;
+            NadekoBot.Client.UserLeft += UsrLeft;
+            NadekoBot.Client.UserJoined += UsrJoined;
+            NadekoBot.Client.UserUnbanned += UsrUnbanned;
+            NadekoBot.Client.ChannelCreated += ChannelCreated;
+            NadekoBot.Client.ChannelDestroyed += ChannelDestroyed;
+            NadekoBot.Client.ChannelUpdated += ChannelUpdated;
 
 
             NadekoBot.Client.MessageReceived += async (s, e) =>
@@ -36,14 +44,92 @@ namespace NadekoBot.Modules.Administration.Commands
                     var usr = e.Message.MentionedUsers.FirstOrDefault(u => u != e.User);
                     if (usr?.Status != UserStatus.Offline)
                         return;
-                    await e.Channel.SendMessage($"User `{usr.Name}` is offline. PM sent.");
+                    await e.Channel.SendMessage($"User `{usr.Name}` is offline. PM sent.").ConfigureAwait(false);
                     await usr.SendMessage(
                         $"User `{e.User.Name}` mentioned you on " +
                         $"`{e.Server.Name}` server while you were offline.\n" +
-                        $"`Message:` {e.Message.Text}");
+                        $"`Message:` {e.Message.Text}").ConfigureAwait(false);
                 }
                 catch { }
             };
+        }
+
+        private async void ChannelUpdated(object sender, ChannelUpdatedEventArgs e)
+        {
+            try
+            {
+                Channel ch;
+                if (!logs.TryGetValue(e.Server, out ch))
+                    return;
+                if (e.Before.Name != e.After.Name)
+                    await ch.SendMessage($@"`{prettyCurrentTime}` **Channel Name Changed** `#{e.Before.Name}` (*{e.After.Id}*)
+        `New:` {e.After.Name}").ConfigureAwait(false);
+                else if (e.Before.Topic != e.After.Topic)
+                    await ch.SendMessage($@"`{prettyCurrentTime}` **Channel Topic Changed** `#{e.After.Name}` (*{e.After.Id}*)
+        `Old:` {e.Before.Topic}
+        `New:` {e.After.Topic}").ConfigureAwait(false);
+            }
+            catch { }
+        }
+
+        private async void ChannelDestroyed(object sender, ChannelEventArgs e)
+        {
+            try
+            {
+                Channel ch;
+                if (!logs.TryGetValue(e.Server, out ch))
+                    return;
+                await ch.SendMessage($"❗`{prettyCurrentTime}`❗`Channel Deleted:` #{e.Channel.Name} (*{e.Channel.Id}*)").ConfigureAwait(false);
+            }
+            catch { }
+        }
+
+        private async void ChannelCreated(object sender, ChannelEventArgs e)
+        {
+            try
+            {
+                Channel ch;
+                if (!logs.TryGetValue(e.Server, out ch))
+                    return;
+                await ch.SendMessage($"`{prettyCurrentTime}`🆕`Channel Created:` #{e.Channel.Mention} (*{e.Channel.Id}*)").ConfigureAwait(false);
+            }
+            catch { }
+        }
+
+        private async void UsrUnbanned(object sender, UserEventArgs e)
+        {
+            try
+            {
+                Channel ch;
+                if (!logs.TryGetValue(e.Server, out ch))
+                    return;
+                await ch.SendMessage($"`{prettyCurrentTime}`♻`User was unbanned:` **{e.User.Name}** ({e.User.Id})").ConfigureAwait(false);
+            }
+            catch { }
+        }
+
+        private async void UsrJoined(object sender, UserEventArgs e)
+        {
+            try
+            {
+                Channel ch;
+                if (!logs.TryGetValue(e.Server, out ch))
+                    return;
+                await ch.SendMessage($"`{prettyCurrentTime}`✅`User joined:` **{e.User.Name}** ({e.User.Id})").ConfigureAwait(false);
+            }
+            catch { }
+        }
+
+        private async void UsrLeft(object sender, UserEventArgs e)
+        {
+            try
+            {
+                Channel ch;
+                if (!logs.TryGetValue(e.Server, out ch))
+                    return;
+                await ch.SendMessage($"`{prettyCurrentTime}`❗`User left:` **{e.User.Name}** ({e.User.Id})").ConfigureAwait(false);
+            }
+            catch { }
         }
 
         private async void UsrBanned(object sender, UserEventArgs e)
@@ -53,7 +139,7 @@ namespace NadekoBot.Modules.Administration.Commands
                 Channel ch;
                 if (!logs.TryGetValue(e.Server, out ch))
                     return;
-                await ch.SendMessage($"`User banned:` **{e.User.Name}** ({e.User.Id})");
+                await ch.SendMessage($"❗`{prettyCurrentTime}`❌`User banned:` **{e.User.Name}** ({e.User.Id})").ConfigureAwait(false);
             }
             catch { }
         }
@@ -64,11 +150,11 @@ namespace NadekoBot.Modules.Administration.Commands
             if (!logs.TryRemove(e.Server, out ch))
             {
                 logs.TryAdd(e.Server, e.Channel);
-                await e.Channel.SendMessage($"**I WILL BEGIN LOGGING SERVER ACTIVITY IN THIS CHANNEL**");
+                await e.Channel.SendMessage($"❗**I WILL BEGIN LOGGING SERVER ACTIVITY IN THIS CHANNEL**❗").ConfigureAwait(false);
                 return;
             }
 
-            await e.Channel.SendMessage($"**NO LONGER LOGGING IN {ch.Mention} CHANNEL**");
+            await e.Channel.SendMessage($"❗**NO LONGER LOGGING IN {ch.Mention} CHANNEL**❗").ConfigureAwait(false);
         };
 
         private async void MsgRecivd(object sender, MessageEventArgs e)
@@ -80,7 +166,19 @@ namespace NadekoBot.Modules.Administration.Commands
                 Channel ch;
                 if (!logs.TryGetValue(e.Server, out ch) || e.Channel == ch)
                     return;
-                await ch.SendMessage($"`Type:` **Message received** `Time:` **{DateTime.Now}** `Channel:` **{e.Channel.Name}**\n`{e.User}:` {e.Message.Text}");
+                if (!string.IsNullOrWhiteSpace(e.Message.Text))
+                {
+                    await ch.SendMessage(
+    $@"🕔`{prettyCurrentTime}` **New Message** `#{e.Channel.Name}`
+👤`{e.User?.ToString() ?? ("NULL")}` {e.Message.Text.Unmention()}").ConfigureAwait(false);
+                }
+                else
+                {
+                    await ch.SendMessage(
+    $@"🕔`{prettyCurrentTime}` **File Uploaded** `#{e.Channel.Name}`
+👤`{e.User?.ToString() ?? ("NULL")}` {e.Message.Attachments.FirstOrDefault()?.ProxyUrl}").ConfigureAwait(false);
+                }
+
             }
             catch { }
         }
@@ -88,12 +186,23 @@ namespace NadekoBot.Modules.Administration.Commands
         {
             try
             {
-                if (e.Server == null || e.Channel.IsPrivate || e.User.Id == NadekoBot.Client.CurrentUser.Id)
+                if (e.Server == null || e.Channel.IsPrivate || e.User?.Id == NadekoBot.Client.CurrentUser.Id)
                     return;
                 Channel ch;
                 if (!logs.TryGetValue(e.Server, out ch) || e.Channel == ch)
                     return;
-                await ch.SendMessage($"`Type:` **Message deleted** `Time:` **{DateTime.Now}** `Channel:` **{e.Channel.Name}**\n`{e.User}:` {e.Message.Text}");
+                if (!string.IsNullOrWhiteSpace(e.Message.Text))
+                {
+                    await ch.SendMessage(
+    $@"🕔`{prettyCurrentTime}` **Message** 🚮 `#{e.Channel.Name}`
+👤`{e.User?.ToString() ?? ("NULL")}` {e.Message.Text.Unmention()}").ConfigureAwait(false);
+                }
+                else
+                {
+                    await ch.SendMessage(
+    $@"🕔`{prettyCurrentTime}` **File Deleted** `#{e.Channel.Name}`
+👤`{e.User?.ToString() ?? ("NULL")}` {e.Message.Attachments.FirstOrDefault()?.ProxyUrl}").ConfigureAwait(false);
+                }
             }
             catch { }
         }
@@ -101,12 +210,16 @@ namespace NadekoBot.Modules.Administration.Commands
         {
             try
             {
-                if (e.Server == null || e.Channel.IsPrivate || e.User.Id == NadekoBot.Client.CurrentUser.Id)
+                if (e.Server == null || e.Channel.IsPrivate || e.User?.Id == NadekoBot.Client.CurrentUser.Id)
                     return;
                 Channel ch;
                 if (!logs.TryGetValue(e.Server, out ch) || e.Channel == ch)
                     return;
-                await ch.SendMessage($"`Type:` **Message updated** `Time:` **{DateTime.Now}** `Channel:` **{e.Channel.Name}**\n**BEFORE**: `{e.User}:` {e.Before.Text}\n---------------\n**AFTER**: `{e.User}:` {e.After.Text}");
+                await ch.SendMessage(
+$@"🕔`{prettyCurrentTime}` **Message** 📝 `#{e.Channel.Name}`
+👤`{e.User?.ToString() ?? ("NULL")}`
+        `Old:` {e.Before.Text.Unmention()}
+        `New:` {e.After.Text.Unmention()}").ConfigureAwait(false);
             }
             catch { }
         }
@@ -118,22 +231,41 @@ namespace NadekoBot.Modules.Administration.Commands
                 if (loggingPresences.TryGetValue(e.Server, out ch))
                     if (e.Before.Status != e.After.Status)
                     {
-                        await ch.SendMessage($"**{e.Before.Name}** is now **{e.After.Status}**.");
+                        await ch.SendMessage($"`{prettyCurrentTime}`**{e.Before.Name}** is now **{e.After.Status}**.").ConfigureAwait(false);
                     }
             }
             catch { }
 
             try
             {
-                if (e.Before.VoiceChannel != null && voiceChannelLog.ContainsKey(e.Before.VoiceChannel))
+                Channel notifyChBefore = null;
+                Channel notifyChAfter = null;
+                var beforeVch = e.Before.VoiceChannel;
+                var afterVch = e.After.VoiceChannel;
+                var notifyLeave = false;
+                var notifyJoin = false;
+                if ((beforeVch != null || afterVch != null) && (beforeVch != afterVch)) // this means we need to notify for sure.
                 {
-                    if (e.After.VoiceChannel != e.Before.VoiceChannel)
-                        await voiceChannelLog[e.Before.VoiceChannel].SendMessage($"🎼`{e.Before.Name} has left the` {e.Before.VoiceChannel.Mention} `voice channel.`");
-                }
-                if (e.After.VoiceChannel != null && voiceChannelLog.ContainsKey(e.After.VoiceChannel))
-                {
-                    if (e.After.VoiceChannel != e.Before.VoiceChannel)
-                        await voiceChannelLog[e.After.VoiceChannel].SendMessage($"🎼`{e.After.Name} has joined the`{e.After.VoiceChannel.Mention} `voice channel.`");
+                    if (beforeVch != null && voiceChannelLog.TryGetValue(beforeVch, out notifyChBefore))
+                    {
+                        notifyLeave = true;
+                    }
+                    if (afterVch != null && voiceChannelLog.TryGetValue(afterVch, out notifyChAfter))
+                    {
+                        notifyJoin = true;
+                    }
+                    if ((notifyLeave && notifyJoin) && (notifyChAfter == notifyChBefore))
+                    {
+                        await notifyChAfter.SendMessage($"🎼`{prettyCurrentTime}` {e.Before.Name} moved from **{beforeVch.Mention}** to **{afterVch.Mention}** voice channel.").ConfigureAwait(false);
+                    }
+                    else if (notifyJoin)
+                    {
+                        await notifyChAfter.SendMessage($"🎼`{prettyCurrentTime}` {e.Before.Name} has joined **{afterVch.Mention}** voice channel.").ConfigureAwait(false);
+                    }
+                    else if (notifyLeave)
+                    {
+                        await notifyChBefore.SendMessage($"🎼`{prettyCurrentTime}` {e.Before.Name} has left **{beforeVch.Mention}** voice channel.").ConfigureAwait(false);
+                    }
                 }
             }
             catch { }
@@ -143,14 +275,35 @@ namespace NadekoBot.Modules.Administration.Commands
                 Channel ch;
                 if (!logs.TryGetValue(e.Server, out ch))
                     return;
-                string str = $"`Type:` **User updated** `Time:` **{DateTime.Now}** `User:` **{e.Before.Name}**\n";
+                string str = $"🕔`{prettyCurrentTime}`";
                 if (e.Before.Name != e.After.Name)
-                    str += $"`New name:` **{e.After.Name}**";
+                    str += $"**Name Changed**👤`{e.Before?.ToString()}`\n\t\t`New:`{e.After.ToString()}`";
+                else if (e.Before.Nickname != e.After.Nickname)
+                    str += $"**Nickname Changed**👤`{e.Before?.ToString()}`\n\t\t`Old:` {e.Before.Nickname}#{e.Before.Discriminator}\n\t\t`New:` {e.After.Nickname}#{e.After.Discriminator}";
                 else if (e.Before.AvatarUrl != e.After.AvatarUrl)
-                    str += $"`New Avatar:` {e.After.AvatarUrl}";
+                    str += $"**Avatar Changed**👤`{e.Before?.ToString()}`\n\t {await e.Before.AvatarUrl.ShortenUrl()} `=>` {await e.After.AvatarUrl.ShortenUrl()}";
+                else if (!e.Before.Roles.SequenceEqual(e.After.Roles))
+                {
+                    if (e.Before.Roles.Count() < e.After.Roles.Count())
+                    {
+                        var diffRoles = e.After.Roles.Where(r => !e.Before.Roles.Contains(r)).Select(r => "`" + r.Name + "`");
+                        str += $"**User's Roles changed ⚔➕**👤`{e.Before?.ToString()}`\n\tNow has {string.Join(", ", diffRoles)} role.";
+                    }
+                    else if (e.Before.Roles.Count() > e.After.Roles.Count())
+                    {
+                        var diffRoles = e.Before.Roles.Where(r => !e.After.Roles.Contains(r)).Select(r => "`" + r.Name + "`");
+                        str += $"**User's Roles changed ⚔➖**👤`{e.Before?.ToString()}`\n\tNo longer has {string.Join(", ", diffRoles)} role.";
+                    }
+                    else
+                    {
+                        Console.WriteLine("SEQUENCE NOT EQUAL BUT NO DIFF ROLES - REPORT TO KWOTH on #NADEKOLOG server");
+                        return;
+                    }
+
+                }
                 else
                     return;
-                await ch.SendMessage(str);
+                await ch.SendMessage(str).ConfigureAwait(false);
             }
             catch { }
         }
@@ -168,10 +321,10 @@ namespace NadekoBot.Modules.Administration.Commands
                         !specificConfig.SendPrivateMessageOnMention;
                     if (specificConfig.SendPrivateMessageOnMention)
                         await e.Channel.SendMessage(":ok: I will send private messages " +
-                                                    "to mentioned offline users.");
+                                                    "to mentioned offline users.").ConfigureAwait(false);
                     else
                         await e.Channel.SendMessage(":ok: I won't send private messages " +
-                                                    "to mentioned offline users anymore.");
+                                                    "to mentioned offline users anymore.").ConfigureAwait(false);
                 });
 
             cgb.CreateCommand(Module.Prefix + "logserver")
@@ -190,11 +343,11 @@ namespace NadekoBot.Modules.Administration.Commands
                       if (!loggingPresences.TryRemove(e.Server, out ch))
                       {
                           loggingPresences.TryAdd(e.Server, e.Channel);
-                          await e.Channel.SendMessage($"**User presence notifications enabled.**");
+                          await e.Channel.SendMessage($"**User presence notifications enabled.**").ConfigureAwait(false);
                           return;
                       }
 
-                      await e.Channel.SendMessage($"**User presence notifications disabled.**");
+                      await e.Channel.SendMessage($"**User presence notifications disabled.**").ConfigureAwait(false);
                   });
 
             cgb.CreateCommand(Module.Prefix + "voicepresence")
@@ -211,23 +364,23 @@ namespace NadekoBot.Modules.Administration.Commands
                           {
                               voiceChannelLog.TryAdd(voiceChannel, e.Channel);
                           }
-                          await e.Channel.SendMessage("Started logging user presence for **ALL** voice channels!");
+                          await e.Channel.SendMessage("Started logging user presence for **ALL** voice channels!").ConfigureAwait(false);
                           return;
                       }
 
                       if (e.User.VoiceChannel == null)
                       {
-                          await e.Channel.SendMessage("💢 You are not in a voice channel right now. If you are, please rejoin it.");
+                          await e.Channel.SendMessage("💢 You are not in a voice channel right now. If you are, please rejoin it.").ConfigureAwait(false);
                           return;
                       }
                       Channel throwaway;
                       if (!voiceChannelLog.TryRemove(e.User.VoiceChannel, out throwaway))
                       {
                           voiceChannelLog.TryAdd(e.User.VoiceChannel, e.Channel);
-                          await e.Channel.SendMessage($"`Logging user updates for` {e.User.VoiceChannel.Mention} `voice channel.`");
+                          await e.Channel.SendMessage($"`Logging user updates for` {e.User.VoiceChannel.Mention} `voice channel.`").ConfigureAwait(false);
                       }
                       else
-                          await e.Channel.SendMessage($"`Stopped logging user updates for` {e.User.VoiceChannel.Mention} `voice channel.`");
+                          await e.Channel.SendMessage($"`Stopped logging user updates for` {e.User.VoiceChannel.Mention} `voice channel.`").ConfigureAwait(false);
                   });
         }
     }

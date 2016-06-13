@@ -1,6 +1,6 @@
 ﻿using Discord;
 using Discord.Commands;
-using NadekoBot.Commands;
+using NadekoBot.Classes;
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
@@ -24,12 +24,12 @@ namespace NadekoBot.Modules.Administration.Commands
                 return;
             if (subscribers.ContainsKey(voiceChannel))
             {
-                await e.Channel.SendMessage("`Voice channel notifications disabled.`");
+                await e.Channel.SendMessage("`Voice channel notifications disabled.`").ConfigureAwait(false);
                 return;
             }
             if (subscribers.TryAdd(voiceChannel, e.Channel))
             {
-                await e.Channel.SendMessage("`Voice channel notifications enabled.`");
+                await e.Channel.SendMessage("`Voice channel notifications enabled.`").ConfigureAwait(false);
             }
         };
 
